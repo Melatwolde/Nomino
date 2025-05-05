@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { generateUsernamesPrompt } from "./prompt";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -36,21 +37,9 @@ async function isUsernameAvailableEverywhere(username: string, platformCount = p
   return results.every(r => r.status === "fulfilled" && r.value);
 }
 
-function parseGPTResponse(content: string) {
-  return content
-    .split("\n")
-    .map(line => line.replace(/^\d+\.\s*/, "").trim())
-    .filter(Boolean)
-    .map(line => {
-      const match = line.match(/^([A-Za-z0-9]+)\s*[-:]\s*(.*)$/);
-      return match
-        ? { name: match[1].trim(), meaning: match[2].trim() }
-        : { name: line.trim(), meaning: "" };
-    });
-}
-
 async function generateUnusedNames(description: string): Promise<{ name: string; meaning: string }[]> {
   const seen = new Set<string>();
+  const prompt = await generateUsernamesPrompt.format({ description });
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const completion = await openai.chat.completions.create({
@@ -58,22 +47,40 @@ async function generateUnusedNames(description: string): Promise<{ name: string;
       messages: [
         {
           role: "system",
-          content:
-            "You're a creative branding assistant. Always invent 5 new, short, catchy brand names by blending syllables and letters from different world languages (Greek, Latin, Chinese, Arabic, Amharic, etc.) using English letters. They must NOT be real dictionary words. Include a short vibe/explanation for each.",
+          content: "You are a branding assistant that returns structured JSON with usernames and meanings.",
         },
         {
           role: "user",
-          content: `Channel idea: ${description}`,
+          content: prompt,
         },
       ],
-      max_tokens: 200,
+      temperature: 0.7,
+      max_tokens: 300,
     });
 
     const content = completion.choices[0].message?.content || "";
-    const candidates = parseGPTResponse(content);
+
+    let suggestions: { name: string; meaning: string }[] = [];
+
+    try {
+      const json = JSON.parse(content);
+      suggestions = json.usernames;
+    } catch (err) {
+      console.error("Failed to parse JSON, retrying...", err);
+      
+    
+
+    suggestions = content
+    .split("\n")
+    .map(line => {
+      const match = line.match(/"name":\s*"([^"]+)",\s*"meaning":\s*"([^"]+)"/);
+      return match ? { name: match[1], meaning: match[2] } : null;
+    })
+    .filter(Boolean) as { name: string; meaning: string }[];
+  }
     const available: { name: string; meaning: string }[] = [];
 
-    for (const { name, meaning } of candidates) {
+    for (const { name, meaning } of suggestions) {
       const username = name.toLowerCase().replace(/[^a-z0-9]/g, "");
       if (seen.has(username)) continue;
       seen.add(username);
@@ -90,6 +97,7 @@ async function generateUnusedNames(description: string): Promise<{ name: string;
 
   return [];
 }
+
 
 export async function POST(req: Request) {
   try {

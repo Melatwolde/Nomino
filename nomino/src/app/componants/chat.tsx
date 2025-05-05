@@ -32,7 +32,7 @@ export default function ChatInput({
     setLoading(true);
 
     try {
-      const response = await fetch('/api/generate_names', {
+      const response = await fetch('http://localhost:3000/api/generate_names', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
